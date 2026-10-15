@@ -17,7 +17,14 @@ function result = main(options)
 %                        right.
 %     Roll             - rotation about the boresight [deg] (0).
 %     VehicleSpeed     - speed over the road [m/s] (20).
-%     GammaDb          - ground reflectivity [dB] (-10).
+%     Permittivity     - relative permittivity of the road (4 - 0.2j),
+%                        assumed for dry asphalt; replace with a measured
+%                        value.
+%     RmsHeight        - RMS height of the road surface [m] (1e-3).
+%     CorrelationLength - correlation length of the road surface [m]
+%                        (5e-3).
+%     CorrelationFunction - "exponential" or "gaussian" ("exponential").
+%     Polarization     - "VV" or "HH" ("VV").
 %     TxPower          - transmit power [W] (10e-3).
 %     SampleRate       - baseband sample rate [Hz] (20e3).
 %     Duration         - observation time [s] (0.2).
@@ -42,7 +49,11 @@ arguments
     options.Yaw (1,1) double {mustBeFinite} = 180
     options.Roll (1,1) double {mustBeFinite} = 0
     options.VehicleSpeed (1,1) double {mustBeFinite} = 20
-    options.GammaDb (1,1) double {mustBeFinite} = -10
+    options.Permittivity (1,1) double {mustBeFinite} = 4 - 0.2j
+    options.RmsHeight (1,1) double {mustBePositive, mustBeFinite} = 1e-3
+    options.CorrelationLength (1,1) double {mustBePositive, mustBeFinite} = 5e-3
+    options.CorrelationFunction (1,1) string = "exponential"
+    options.Polarization (1,1) string = "VV"
     options.TxPower (1,1) double {mustBePositive, mustBeFinite} = 10e-3
     options.SampleRate (1,1) double {mustBePositive, mustBeFinite} = 20e3
     options.Duration (1,1) double {mustBePositive, mustBeFinite} = 0.2
@@ -67,7 +78,9 @@ end
 % inspection. radiated has the samples of tx: the antenna pattern acts per
 % direction, on transmit when the road scatters the wave and on receive.
 fs = options.SampleRate;
-ground = GroundPlane(options.GammaDb, -options.VehicleSpeed);  % The road moves backwards past the vehicle
+ground = GroundPlane(options.Permittivity, options.RmsHeight, options.CorrelationLength, ...
+    -options.VehicleSpeed, ...      % The road moves backwards past the vehicle
+    CorrelationFunction=options.CorrelationFunction, Polarization=options.Polarization);
 tx = Waveform(sqrt(options.TxPower) * ones(round(options.Duration * fs), 1), fs, ...
     options.CarrierFrequency, Label="Transmitted CW");
 radiated = ant.transmit(tx);
@@ -84,8 +97,9 @@ centre = ant.boresightGroundPoint(options.MountHeight);
 boresightDoppler = ground.dopplerShift(ant, options.MountHeight, centre(1), centre(2));
 b = ant.boresight();
 estimatedSpeed = centroid * ant.Wavelength / (2 * b(1));
-fprintf("Echo power %.1f dBm, Doppler centroid %.0f Hz (boresight %.0f Hz), estimated speed %.2f m/s\n", ...
-    10 * log10(rx.Power / 1e-3), centroid, boresightDoppler, estimatedSpeed);
+boresightSigma0 = ground.sigma0(ant, max(options.Depression, 0));
+fprintf("Road sigma0 %.1f dB at boresight, echo power %.1f dBm, Doppler centroid %.0f Hz (boresight %.0f Hz), estimated speed %.2f m/s\n", ...
+    10 * log10(boresightSigma0), 10 * log10(rx.Power / 1e-3), centroid, boresightDoppler, estimatedSpeed);
 
 if options.Plot
     plot([tx, echo, rx], TimeLimits=[0 10e-3]);

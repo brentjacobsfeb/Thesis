@@ -28,7 +28,7 @@ plot([tx, echo, rx])                            % time signal and spectrum of ev
 - `simulator/tests/WaveformTest.m`: Unit tests of the waveform.
 - `simulator/components/RadarAntenna.m`: Antenna model: interpolated gain table, operating frequency and mounting on the vehicle; `transmit` and `receive` a waveform. See `help RadarAntenna`.
 - `simulator/tests/RadarAntennaTest.m`: Unit tests of the antenna model.
-- `simulator/components/GroundPlane.m`: Road model: constant-gamma backscatter (`sigma0 = gamma * sin(grazing)`) from a ground moving along the vehicle x axis; `scatter` turns a radiated waveform into the Doppler-shifted echo arriving back at the antenna. See `help GroundPlane`.
+- `simulator/components/GroundPlane.m`: Road model: a randomly rough dielectric surface (permittivity, RMS height, correlation length, polarization) moving along the vehicle x axis. It reflects the specular (coherent) wave with the Fresnel coefficient weakened by the roughness, and scatters the diffuse wave with the integral equation model (IEM) backscatter coefficient `sigma0`. `scatter` turns a radiated waveform into the echo arriving back at the antenna: the zero-Doppler mirror reflection from straight below plus the Doppler-shifted diffuse echo of the road under the beam. See `help GroundPlane`.
 - `simulator/tests/GroundPlaneTest.m`: Unit tests of the road model.
 - `simulator/run_tests.m`: Runs the tests.
 
