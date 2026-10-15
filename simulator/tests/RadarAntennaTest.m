@@ -118,6 +118,8 @@ classdef RadarAntennaTest < matlab.unittest.TestCase
             ant = RadarAntenna(args{:});
             testCase.verifyError(@() ant.plotPattern("vehicle"), "MATLAB:minrhs");
             testCase.verifyError(@() ant.plotPattern(), "MATLAB:minrhs");
+            testCase.verifyError(@() ant.transmit(), "MATLAB:minrhs");
+            testCase.verifyError(@() ant.receive(), "MATLAB:minrhs");
         end
 
         function wavelengthMatchesFrequency(testCase, frequency)
@@ -203,6 +205,34 @@ classdef RadarAntennaTest < matlab.unittest.TestCase
         end
     end
 
+    %% Measurement chain (the echo itself is tested in GroundPlaneTest)
+    methods (Test)
+        function transmitRadiatesPortSignal(testCase)
+            ant = RadarAntennaTest.gaussian([10 10], [45 0 0]);
+            tx = Waveform(exp(2j * pi * (0:63).' / 8), 1e3, 24.125e9);
+            radiated = ant.transmit(tx);
+            testCase.verifyEqual(radiated.State, "radiated");
+            testCase.verifyEqual(radiated.Radiator, ant);
+            testCase.verifyEqual(radiated.Samples, tx.Samples);
+            testCase.verifyEqual([radiated.SampleRate radiated.CarrierFrequency], [tx.SampleRate tx.CarrierFrequency]);
+        end
+
+        function transmitNeedsConductedCarrier(testCase)
+            ant = RadarAntennaTest.gaussian([10 10], [45 0 0]);
+            radiated = ant.transmit(Waveform(ones(8, 1), 1e3, 24.125e9));
+            testCase.verifyError(@() ant.transmit(radiated), "RadarAntenna:notConducted");
+            testCase.verifyError(@() ant.transmit(Waveform(ones(8, 1), 1e3, 0)), "RadarAntenna:noCarrier");
+            testCase.verifyError(@() ant.transmit(ones(8, 1)), "MATLAB:validation:UnableToConvert");
+        end
+
+        function receiveNeedsIncidentWaveform(testCase)
+            ant = RadarAntennaTest.gaussian([10 10], [45 0 0]);
+            tx = Waveform(ones(8, 1), 1e3, 24.125e9);
+            testCase.verifyError(@() ant.receive(tx), "RadarAntenna:notIncident");
+            testCase.verifyError(@() ant.receive(ant.transmit(tx)), "RadarAntenna:notIncident");
+        end
+    end
+
     %% Plots
     methods (Test)
         function cutsShowPrincipalPlanes(testCase)
@@ -236,7 +266,7 @@ classdef RadarAntennaTest < matlab.unittest.TestCase
             for k = 1:2
                 fig = ant.plotPattern(frames(k), 30);
                 testCase.addTeardown(@close, fig);
-                s = findobj(fig, "Type", "surface");
+                s = findobj(fig, "Tag", "pattern");
                 xyz = [s.XData(:).'; s.YData(:).'; s.ZData(:).'];
                 [radius, i] = max(vecnorm(xyz));
                 testCase.verifyEqual(radius, 30, AbsTol=1e-9);
@@ -266,6 +296,45 @@ classdef RadarAntennaTest < matlab.unittest.TestCase
             testCase.addTeardown(@close, fig);
             testCase.verifyEqual(axisTip(fig, "antenna-x"), [1; 0; 0], AbsTol=1e-12);
             testCase.verifyEqual(axisTip(fig, "vehicle-z"), R.' * [0; 0; 1], AbsTol=1e-12);
+        end
+
+        function patternShowsRoadFootprint(testCase)
+            original = get(groot, "DefaultFigureVisible");
+            set(groot, "DefaultFigureVisible", "off");
+            testCase.addTeardown(@set, groot, "DefaultFigureVisible", original);
+
+            height = 0.6;
+            ant = RadarAntennaTest.gaussian([10 20], [35 20 0]);
+            frames = ["antenna", "vehicle"];
+            expected = [[1; 0; 0], ant.boresight()];
+            for k = 1:2
+                [fig, footprintFig] = ant.plotPattern(frames(k), 30, MountHeight=height);
+                testCase.addTeardown(@close, [fig footprintFig]);
+                % The middle of the road grid is the boresight ground point,
+                % drawn at the tip of the main lobe.
+                road = findobj(fig, "Tag", "road");
+                tip = [road.XData(151, 151); road.YData(151, 151); road.ZData(151, 151)];
+                testCase.verifyEqual(tip, 30 * expected(:, k), AbsTol=1e-9);
+                testCase.verifyEqual(road.CData(151, 151), 20, AbsTol=1e-9);
+
+                image = findobj(footprintFig, "Type", "image");
+                p = ant.boresightGroundPoint(height);
+                d = norm(p);
+                testCase.verifyEqual(image.XData([1 end]), p(1) + [-d d], AbsTol=1e-12);
+                testCase.verifyEqual(reshape(image.YData([1 end]), 1, 2), p(2) + [-d d], AbsTol=1e-12);
+                testCase.verifyEqual(image.CData, 10 * log10(ant.groundGain(height, ...
+                    p(1) + linspace(-d, d, 301), p(2) + linspace(-d, d, 301).')), AbsTol=1e-9);
+                testCase.verifyEqual(findobj(footprintFig, "Type", "axes").CLim, ...
+                    findobj(fig, "Type", "axes").CLim);
+            end
+
+            [fig, footprintFig] = ant.plotPattern("vehicle", 30);
+            testCase.addTeardown(@close, fig);
+            testCase.verifyEmpty(findobj(fig, "Tag", "road"));
+            testCase.verifyEmpty(footprintFig);
+            upward = RadarAntennaTest.gaussian([10 20], [-5 0 0]);
+            testCase.verifyError(@() upward.plotPattern("vehicle", 30, MountHeight=height), ...
+                "RadarAntenna:noFootprint");
         end
     end
 end

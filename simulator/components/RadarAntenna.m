@@ -12,6 +12,9 @@ classdef RadarAntenna
     %     yaw        - boresight azimuth from the direction of travel [deg].
     %     roll       - rotation about the boresight [deg].
     %
+    %   In the measurement chain, transmit radiates a Waveform and receive
+    %   turns an incident Waveform into the signal at the antenna port.
+    %
     %   Coordinate frames
     %     Antenna frame: x = boresight, y = left, z = up. Azimuth is measured
     %       from x towards y, elevation from the x-y plane towards z (the
@@ -82,6 +85,51 @@ classdef RadarAntenna
             lambda = 299792458 / obj.Frequency;
         end
 
+        function wf = transmit(obj, wf)
+            %TRANSMIT Radiate the waveform fed to the antenna port.
+            %   wf = transmit(ant, wf) radiates the conducted Waveform wf. The
+            %   samples stay the port signal: the field radiated towards a
+            %   direction is that signal times field(az, el), which depends
+            %   on the direction and is applied per direction by whatever
+            %   scatters the wave (see GroundPlane.scatter). The gain table
+            %   already includes the losses of the antenna.
+            %
+            %   The table is used as is at the carrier frequency of wf,
+            %   which sets the wavelength of the radiated wave.
+            arguments
+                obj
+                wf (1,1) Waveform
+            end
+            if wf.State ~= "conducted"
+                error("RadarAntenna:notConducted", ...
+                    "transmit needs a waveform at the antenna port, not a %s one.", wf.State);
+            end
+            if wf.CarrierFrequency == 0
+                error("RadarAntenna:noCarrier", "transmit needs a waveform on a carrier (CarrierFrequency > 0).");
+            end
+            wf.Radiator = obj;
+            wf.Label = "Radiated by the antenna";
+        end
+
+        function wf = receive(obj, wf)
+            %RECEIVE Signal at the antenna port from an incident wave.
+            %   wf = receive(ant, wf) returns the conducted Waveform at the
+            %   port of the antenna for the incident Waveform wf (see
+            %   GroundPlane.scatter): every incoming wave is weighted by the
+            %   field of the antenna towards where it comes from.
+            arguments
+                obj
+                wf (1,1) Waveform
+            end
+            if wf.State ~= "incident"
+                error("RadarAntenna:notIncident", ...
+                    "receive needs a waveform incident on the antenna, not a %s one.", wf.State);
+            end
+            wf.Samples = wf.IncidentField(obj);
+            wf.IncidentField = [];
+            wf.Label = "Received at the antenna port";
+        end
+
         function F = field(obj, az, el)
             %FIELD Complex far field sqrt(gain)*exp(j*phase) in the antenna frame.
             %   az, el [deg] can be any arrays of compatible size.
@@ -133,17 +181,25 @@ classdef RadarAntenna
             legend(ax, "Azimuth plane", "Elevation plane");
         end
 
-        function fig = plotPattern(obj, frame, dynamicRange)
+        function [fig, footprintFig] = plotPattern(obj, frame, dynamicRange, options)
             %PLOTPATTERN 3D view of the radiation pattern.
             %   plotPattern(ant, frame, dynamicRange) draws the gain as a
             %   surface whose radius is the gain [dB] above the peak minus
             %   dynamicRange [dB]. frame is "antenna" or "vehicle"; the
             %   vehicle frame shows the pattern as mounted (x = direction of
             %   travel, z = up).
+            %
+            %   [fig, footprintFig] = plotPattern(..., MountHeight=height)
+            %   also shows the road below the antenna, mounted at height [m]:
+            %   in the 3D view, scaled to put the boresight ground point at
+            %   the tip of the main lobe, and in footprintFig as a map of the
+            %   one-way gain on the road. Both share the colour scale of the
+            %   pattern. footprintFig is empty without MountHeight.
             arguments
                 obj
                 frame (1,1) string {mustBeMember(frame, ["antenna", "vehicle"])}
                 dynamicRange (1,1) double {mustBePositive}
+                options.MountHeight (1,1) double {mustBePositive, mustBeFinite}
             end
             az = -180:180;
             el = (-90:90).';
@@ -162,7 +218,7 @@ classdef RadarAntenna
 
             fig = figure("Name", "Antenna radiation pattern");
             ax = axes(fig);
-            surf(ax, X, Y, Z, max(G, floorDb), "EdgeColor", "none");
+            surf(ax, X, Y, Z, max(G, floorDb), "EdgeColor", "none", "Tag", "pattern");
             axis(ax, "equal");
             clim(ax, [floorDb, max(G(:))]);
             cb = colorbar(ax);
@@ -200,6 +256,45 @@ classdef RadarAntenna
             end
             plot3(ax, 0, 0, 0, "ko", "MarkerFaceColor", "k", "Tag", "origin");
             text(ax, 0, 0, 0, "  origin", "VerticalAlignment", "top");
+
+            footprintFig = gobjects(0);
+            if isfield(options, "MountHeight")
+                height = options.MountHeight;
+                centre = obj.boresightGroundPoint(height);
+                if any(isnan(centre))
+                    error("RadarAntenna:noFootprint", "The boresight does not reach the road.");
+                end
+                % Square around the boresight ground point, as wide as twice
+                % its distance from below the antenna.
+                halfWidth = norm(centre);
+                x = centre(1) + linspace(-halfWidth, halfWidth, 301);
+                y = centre(2) + linspace(-halfWidth, halfWidth, 301).';
+                roadGainDb = 10 * log10(obj.groundGain(height, x, y));
+
+                % The pattern radius is in dB, so the road is scaled to put
+                % the boresight ground point at radius dynamicRange.
+                scale = dynamicRange / norm([centre; height]);
+                road = scale * [reshape(x + 0 * y, 1, []); reshape(y + 0 * x, 1, []); -height + zeros(1, numel(roadGainDb))];
+                label = scale * [centre; -height];
+                if frame == "antenna"
+                    road = R.' * road;
+                    label = R.' * label;
+                end
+                surf(ax, reshape(road(1, :), size(roadGainDb)), reshape(road(2, :), size(roadGainDb)), ...
+                    reshape(road(3, :), size(roadGainDb)), max(roadGainDb, floorDb), ...
+                    "EdgeColor", "none", "FaceAlpha", 0.85, "Tag", "road");
+                text(ax, label(1), label(2), label(3), "  illuminated road", "VerticalAlignment", "top");
+
+                footprintFig = figure("Name", "Antenna footprint on the road");
+                footprintAx = axes(footprintFig);
+                imagesc(footprintAx, x, y, roadGainDb, [floorDb, max(G(:))]);
+                set(footprintAx, "YDir", "normal");
+                axis(footprintAx, "equal", "tight");
+                colorbar(footprintAx);
+                xlabel(footprintAx, "Along track x [m]");
+                ylabel(footprintAx, "Cross track y [m]");
+                title(footprintAx, "One-way gain on the road [dBi]");
+            end
             hold(ax, "off");
             view(ax, 3);
             rotate3d(fig, "on");
