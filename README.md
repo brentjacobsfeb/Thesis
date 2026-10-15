@@ -16,7 +16,9 @@ The simulator models the functionality and non-idealities of the building blocks
 - `simulator/components/main_test.m`: A complete measurement chain tester.
 - `simulator/components/RadarAntenna.m`: Antenna model: interpolated gain table, operating frequency and mounting on the vehicle. See `help RadarAntenna`.
 - `simulator/tests/RadarAntennaTest.m`: Unit tests of the antenna model.
-- `simulator/demo.m`: Examples of the antenna model (table from a formula, ground footprint, importing an Antenna Toolbox pattern).
+- `simulator/components/GroundPlane.m`: Road model: constant-gamma backscatter (`sigma0 = gamma * sin(grazing)`) from a ground moving along the vehicle x axis, producing the Doppler-shifted echo the antenna receives. See `help GroundPlane`.
+- `simulator/tests/GroundPlaneTest.m`: Unit tests of the road model.
+- `simulator/demo.m`: Examples of the antenna model (table from a formula, ground footprint, ground echo and Doppler speed estimate, importing an Antenna Toolbox pattern).
 - `simulator/run_tests.m`: Runs the tests.
 
 ## Running the tests
